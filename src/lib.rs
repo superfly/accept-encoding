@@ -90,19 +90,22 @@ pub fn parse(headers: &HeaderMap) -> Result<Option<Encoding>> {
 
 /// Select the encoding with the largest qval or the first with qval ~= 1
 pub fn preferred(
-    mut encodings: impl Iterator<Item = Result<(Option<Encoding>, f32)>>,
+    encodings: impl Iterator<Item = Result<(Option<Encoding>, f32)>>,
 ) -> Result<Option<Encoding>> {
-    Ok(encodings
-        .fold_ok((None, 0.0), |(ae, aq), (e, q)| {
-            if (aq - 1.0f32).abs() < 0.01 {
-                (ae, aq)
-            } else if q > aq {
-                (e, q)
-            } else {
-                (ae, aq)
-            }
-        })?
-        .0)
+    let mut preferred_encoding = None;
+    let mut max_qval = 0.0;
+
+    for r in encodings {
+        let (encoding, qval) = r?;
+        if (qval - 1.0f32).abs() < 0.01 {
+            return Ok(encoding);
+        } else if qval > max_qval {
+            preferred_encoding = encoding;
+            max_qval = qval;
+        }
+    }
+
+    Ok(preferred_encoding)
 }
 
 /// Parse a set of HTTP headers into a vector containing tuples of options containing encodings and their corresponding q-values.
