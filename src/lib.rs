@@ -35,6 +35,7 @@ mod error;
 
 pub use crate::error::{Error, Result};
 use http::header::{HeaderMap, HeaderValue, ACCEPT_ENCODING};
+use itertools::Itertools;
 
 /// Encodings to use.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
@@ -61,7 +62,7 @@ impl Encoding {
             "zstd" => Ok(Some(Encoding::Zstd)),
             "identity" => Ok(Some(Encoding::Identity)),
             "*" => Ok(None),
-            _ => Err(Error::UnknownEncoding)?,
+            _ => Err(Error::UnknownEncoding),
         }
     }
 
@@ -84,13 +85,20 @@ impl Encoding {
 /// Note that a result of `None` indicates there preference is expressed on which encoding to use.
 /// Either the `Accept-Encoding` header is not present, or `*` is set as the most preferred encoding.
 pub fn parse(headers: &HeaderMap) -> Result<Option<Encoding>> {
+    preferred(encodings_iter(headers))
+}
+
+/// Select the encoding with the largest qval or the first with qval ~= 1
+pub fn preferred(
+    encodings: impl Iterator<Item = Result<(Option<Encoding>, f32)>>,
+) -> Result<Option<Encoding>> {
     let mut preferred_encoding = None;
     let mut max_qval = 0.0;
 
-    for (encoding, qval) in encodings(headers)? {
+    for r in encodings {
+        let (encoding, qval) = r?;
         if (qval - 1.0f32).abs() < 0.01 {
-            preferred_encoding = encoding;
-            break;
+            return Ok(encoding);
         } else if qval > max_qval {
             preferred_encoding = encoding;
             max_qval = qval;
@@ -122,33 +130,31 @@ pub fn parse(headers: &HeaderMap) -> Result<Option<Encoding>> {
 /// # Ok(())}
 /// ```
 pub fn encodings(headers: &HeaderMap) -> Result<Vec<(Option<Encoding>, f32)>> {
+    encodings_iter(headers).collect()
+}
+
+/// Parse a set of HTTP headers into an iterator containing tuples of options containing encodings and their corresponding q-values.
+pub fn encodings_iter(
+    headers: &HeaderMap,
+) -> impl Iterator<Item = Result<(Option<Encoding>, f32)>> + '_ {
     headers
         .get_all(ACCEPT_ENCODING)
         .iter()
         .map(|hval| hval.to_str().map_err(|_| Error::InvalidEncoding))
-        .collect::<Result<Vec<&str>>>()?
-        .iter()
-        .flat_map(|s| s.split(',').map(str::trim))
-        .filter_map(|v| {
-            let mut v = v.splitn(2, ";q=");
-            let encoding = match Encoding::parse(v.next().unwrap()) {
-                Ok(encoding) => encoding,
-                Err(_) => return None, // ignore unknown encodings
+        .map_ok(|s| s.split(',').map(str::trim))
+        .flatten_ok()
+        .filter_map_ok(|v| {
+            let (e, q) = match v.split_once(";q=") {
+                Some((e, q)) => (e, q),
+                None => return Some(Ok((Encoding::parse(v).ok()?, 1.0f32))),
             };
-            let qval = if let Some(qval) = v.next() {
-                let qval = match qval.parse::<f32>() {
-                    Ok(f) => f,
-                    Err(_) => return Some(Err(Error::InvalidEncoding)),
-                };
-                if qval > 1.0 {
-                    return Some(Err(Error::InvalidEncoding)); // q-values over 1 are unacceptable
-                }
-                qval
-            } else {
-                1.0f32
+            let encoding = Encoding::parse(e).ok()?; // ignore unknown encodings
+            let qval = match q.parse() {
+                Ok(f) if f > 1.0 => return Some(Err(Error::InvalidEncoding)), // q-values over 1 are unacceptable,
+                Ok(f) => f,
+                Err(_) => return Some(Err(Error::InvalidEncoding)),
             };
             Some(Ok((encoding, qval)))
         })
-        .map(|v| v.map_err(std::convert::Into::into))
-        .collect::<Result<Vec<(Option<Encoding>, f32)>>>()
+        .map(|r| r?) // flatten Result<Result<...
 }
