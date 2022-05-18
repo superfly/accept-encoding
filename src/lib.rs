@@ -141,13 +141,15 @@ pub fn encodings_iter(
         .map_ok(|s| s.split(',').map(str::trim))
         .flatten_ok()
         .filter_map_ok(|v| {
-            let mut v = v.splitn(2, ";q=");
-            let encoding = Encoding::parse(v.next()?).ok()?; // ignore unknown encodings
-            let qval = match v.next().map(|v| v.parse()) {
-                Some(Ok(f)) if f > 1.0 => return Some(Err(Error::InvalidEncoding)), // q-values over 1 are unacceptable,
-                Some(Ok(f)) => f,
-                Some(Err(_)) => return Some(Err(Error::InvalidEncoding)),
-                None => 1.0f32,
+            let (e, q) = match v.split_once(";q=") {
+                Some((e, q)) => (e, q),
+                None => return Some(Ok((Encoding::parse(v).ok()?, 1.0f32))),
+            };
+            let encoding = Encoding::parse(e).ok()?; // ignore unknown encodings
+            let qval = match q.parse() {
+                Ok(f) if f > 1.0 => return Some(Err(Error::InvalidEncoding)), // q-values over 1 are unacceptable,
+                Ok(f) => f,
+                Err(_) => return Some(Err(Error::InvalidEncoding)),
             };
             Some(Ok((encoding, qval)))
         })
