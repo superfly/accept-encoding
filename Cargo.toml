@@ -10,7 +10,7 @@ license       = "MIT OR Apache-2.0"
 name          = "fly-accept-encoding"
 readme        = "README.md"
 repository    = "https://github.com/superfly/accept-encoding"
-version       = "0.2.0"
+version       = "0.3.0"
 
 [dependencies]
 http      = "1.4.0"
